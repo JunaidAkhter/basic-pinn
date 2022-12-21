@@ -8,10 +8,12 @@ from torch import nn
 
 LENGTH = 1.
 TOTAL_TIME = 1.
+v = 1e-6
+
 
 
 def initial_condition(x) -> torch.Tensor:
-    res = torch.sin( 2*np.pi * x).reshape(-1, 1) * 0.5
+    res = torch.sin(np.pi * x).reshape(-1, 1)
     return res
 
 
@@ -95,7 +97,8 @@ def compute_loss(
     C = 1.
 
     # PDE residual
-    interior_loss = dfdx(nn_approximator, x, t, order=2) - (1/C**2) * dfdt(nn_approximator, x, t, order=2)
+    interior_loss = dfdt(nn_approximator, x, t, order=1) + f(nn_approximator, x, t) \
+                    * dfdx(nn_approximator, x, t, order=1) - v * dfdx(nn_approximator, x, t, order=2)
 
     # periodic boundary conditions at the domain extrema
     t_raw = torch.unique(t).reshape(-1, 1).detach().numpy()
@@ -143,6 +146,7 @@ def compute_loss(
         final_loss += boundary_loss_xf.pow(2).mean() + boundary_loss_xi.pow(2).mean()
 
     return final_loss
+
 
 
 def train_model(
@@ -224,8 +228,8 @@ def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
 if __name__ == "__main__":
     from functools import partial
 
-    x_domain = [0.0, LENGTH]; n_points_x = 150
-    t_domain = [0.0, TOTAL_TIME]; n_points_t = 150
+    x_domain = [-1, LENGTH]; n_points_x = 50
+    t_domain = [-1, TOTAL_TIME]; n_points_t = 50
     
 
     x_raw = torch.linspace(x_domain[0], x_domain[1], steps=n_points_x, requires_grad=True)
@@ -268,3 +272,5 @@ if __name__ == "__main__":
 
     input("Plot")
     plot_solution(nn_approximator_trained, x, t)
+
+
