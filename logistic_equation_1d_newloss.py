@@ -34,6 +34,8 @@ class NNApproximator(nn.Module):
 def f(nn: NNApproximator, x: torch.Tensor) -> torch.Tensor:
     """Compute the value of the approximate solution from the NN model"""
 
+    print("the input vector x: ", x)
+
     boundary = torch.Tensor([0.0])
     boundary.requires_grad = True 
 
@@ -158,5 +160,5 @@ if __name__ == "__main__":
     ax.semilogy(loss_evolution)
     ax.set(title="Loss evolution", xlabel="# epochs", ylabel="Loss")
     ax.legend()
-
     plt.show()
+    #plt.savefig("logictic_modified.pdf")

@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
-TOTAL_TIME = 12.0
+TOTAL_TIME = 1.0
 a = 1.0
 b = a
 c = a
@@ -48,20 +48,52 @@ def f(nn_approximator: PINN, x: torch.Tensor) -> torch.Tensor:
 
     return nn_approximator(x)
 
-
+""" 
 def df(nn_approximator:PINN, x: torch.Tensor = None, order: int = 1) -> torch.Tensor:
-    """Compute neural network derivative with respect to input features using PyTorch autograd engine"""
     df_value = f(nn_approximator, x)
+    print("the shape of the df_vlaue before:", df_value.shape)
     for _ in range(order):
         df_value = torch.autograd.grad(
             df_value,
             x,
-            grad_outputs= torch.ones(x.shape[0],  2), 
+            #grad_outputs=torch.ones(x.shape[0],  2),  
+            grad_outputs=torch.ones_like(df_value),  
             create_graph=True,
             retain_graph=True,
         )[0]
-
+    print("The shape of the df value:", df_value.shape)
     return df_value
+ """
+def df(nn_approximator:PINN, x: torch.Tensor = None, order: int = 1) -> torch.Tensor:
+  
+    df_value = f(nn_approximator, x)
+    #print("type of df_value on top:", type(df_value), "shape of df_value:", df_value.shape)
+
+    df_u = df_value[:, 0].reshape(-1, 1)
+
+    #print("df_u on top:", df_u)
+    df_v = df_value[:, 1].reshape(-1, 1)
+
+    for _ in range(order):
+        df_u = torch.autograd.grad(
+            df_u,
+            x,
+            grad_outputs= torch.ones_like(df_u), 
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        df_v = torch.autograd.grad(
+            df_v,
+            x,
+            grad_outputs= torch.ones_like(df_v), 
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+    #print("shape of df_u:", df_u.shape)
+    #print("shape of df_v:", df_v.shape)
+
+    #print("type of df_value:", type(df_value), "shape of df_value:", df_value.shape)
+    return [df_u, df_v]
 
 def compute_loss(
     nn_approximator:PINN, x: torch.Tensor = None, verbose: bool = False
@@ -71,11 +103,18 @@ def compute_loss(
     This custom loss function is fully defined with differentiable tensors therefore
     the .backward() method can be applied to it
     """
-    interior_loss_u = df(nn_approximator, x)[0] - a * f(nn_approximator, x)[0] +\
-                             b * f(nn_approximator, x)[0] * f(nn_approximator, x)[1]
+    #print("shape of the du derivative:", df(nn_approximator, x).shape)
 
-    interior_loss_v = df(nn_approximator, x)[1] - d * f(nn_approximator, x)[0]*f(nn_approximator, x)[1] +\
-                             c * f(nn_approximator, x)[1]
+    #print("shape of the derivative:", df(nn_approximator, x).shape)
+
+
+    #print("The shafe of the neural network output is:", f(nn_approximator, x).shape)
+
+    interior_loss_u = df(nn_approximator, x)[0] - a * f(nn_approximator, x)[:, 0] +\
+                             b * f(nn_approximator, x)[:, 0] * f(nn_approximator, x)[:, 1]
+
+    interior_loss_v = df(nn_approximator, x)[1] - d * f(nn_approximator, x)[:, 0]*f(nn_approximator, x)[:, 1] +\
+                             c * f(nn_approximator, x)[:, 1]
 
     interior_loss = interior_loss_u + interior_loss_v
 
@@ -121,6 +160,14 @@ def train_model(
     return nn_approximator, np.array(loss_evolution)
 
 
+def input_transform(t):
+    return torch.cat(
+         [
+             torch.sin(t),
+         ],
+         dim=1
+     )
+
 
 if __name__ == "__main__":
     from functools import partial
@@ -128,8 +175,8 @@ if __name__ == "__main__":
     domain = [0.0, TOTAL_TIME]
     x = torch.linspace(domain[0], domain[1], steps=10, requires_grad=True)
     x = x.reshape(x.shape[0], 1)
-
-    nn_approximator = PINN(6, 15)
+    #x = input_transform(x)
+    nn_approximator = PINN(6, 50)
     # f_initial = f(nn_approximator, x)
     # ax.plot(x.detach().numpy(), f_initial.detach().numpy(), label="Initial NN solution")
 
@@ -137,12 +184,12 @@ if __name__ == "__main__":
     loss_fn = partial(compute_loss, x=x, verbose=True)
 
     nn_approximator_trained, loss_evolution = train_model(
-        nn_approximator, loss_fn=loss_fn, learning_rate=0.1, max_epochs=20_000
+        nn_approximator, loss_fn=loss_fn, learning_rate=0.1, max_epochs=10_000
     )
 
     x_eval = torch.linspace(domain[0], domain[1], steps=100).reshape(-1, 1)
 
-
+    #x = input_transform(x_eval)
     # plotting
 
     fig, ax = plt.subplots()
@@ -159,7 +206,7 @@ if __name__ == "__main__":
  
     ax.plot(x_eval.detach().numpy(), f_final.detach().numpy()[:, 1], label="NN final solution v", color = "black")
 
-    ax.set(title="Lotka_voltera_equations", xlabel="t", ylabel="f(t)")
+    ax.set(title="Lotka_voltera_equations", xlabel="t", ylabel="Population")
     ax.legend()
 
     fig, ax = plt.subplots()

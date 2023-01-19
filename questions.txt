@@ -1,0 +1,6 @@
+Questions about the code:
+
+1. Why do we need to even minimize the boundary loss. Can't we enforce that the boundary conditions or is it important that we learn it.
+2. In Burger's equation a regularization term is used while this is not the case with other equations. So how can one even decide how to use the boundary condition.
+3. What is the term "initial_loss_df"? It has been used in wave-equation but not in burgers equation.
+4.

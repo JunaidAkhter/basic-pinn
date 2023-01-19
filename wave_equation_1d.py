@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
-
+#from torchviz import make_dot 
 
 LENGTH = 1.
 TOTAL_TIME = 1.
@@ -38,11 +38,24 @@ class PINN(nn.Module):
 
     def forward(self, x, t):
 
+        #print("shape of x: ", x.shape)
+        #print("shape of t: ", t.shape)
+
+        #print("t:", t)
+        #print("x", x)
         x_stack = torch.cat([x, t], dim=1)        
+        print("x_stack", x_stack)
+        print("shape of x_stack:", x_stack.shape)
+
         out = self.act(self.layer_in(x_stack))
+
+        #print("shape of out: ", out.shape)
+
         for layer in self.middle_layers:
             out = self.act(layer(out))
         logits = self.layer_out(out)
+
+        print("shape of logits:", logits.shape)
 
         # if requested pin the boundary conditions 
         # using a surrogate model: (x - 0) * (x - L) * NN(x)
@@ -53,7 +66,13 @@ class PINN(nn.Module):
 
 def f(nn_approximator: PINN, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
     """Compute the value of the approximate solution from the NN model"""
-    return nn_approximator(x, t)
+    
+    #print("shape of x fed to nn:", x.shape)
+    #print("shape of t fed to nn", t.shape)
+    #print("pringting t:", t)
+    y = nn_approximator(x, t)
+    #make_dot(y.mean(), params=dict(nn_approximator.named_parameters()))
+    return y
 
 
 def df(output: torch.Tensor, input: torch.Tensor, order: int = 1) -> torch.Tensor:
@@ -67,7 +86,7 @@ def df(output: torch.Tensor, input: torch.Tensor, order: int = 1) -> torch.Tenso
             create_graph=True,
             retain_graph=True,
         )[0]
-
+    print("shape of df:", df_value.shape)
     return df_value
 
 
@@ -95,6 +114,10 @@ def compute_loss(
     C = 1.
 
     # PDE residual
+    #print("shape  of x before interior loss:", x.shape)
+
+    #print("the output dimension of the neural network", f(nn_approximator, x, t).shape)
+
     interior_loss = dfdx(nn_approximator, x, t, order=2) - (1/C**2) * dfdt(nn_approximator, x, t, order=2)
 
     # periodic boundary conditions at the domain extrema
@@ -127,16 +150,23 @@ def compute_loss(
     #print(" t raw inside shape: ", t_raw.shape)
 
     f_initial = initial_condition(x_raw)    
+
+    #print("shape of f_initial : ", f_initial.shape)
+
     t_initial = torch.zeros_like(x_raw)
     t_initial.requires_grad = True
 
+
+    #print("shape of nn output for x  raw:", f(nn_approximator,x_raw, t_initial).shape)
     initial_loss_f = f(nn_approximator, x_raw, t_initial) - f_initial 
     initial_loss_df = dfdt(nn_approximator, x_raw, t_initial, order=1)
     
-    # obtain the final MSE loss by averaging each loss term and summing them up
+    # obtain the final MSE loss by averaging each loss term and summing them up. Remember that this
+    # is just a number (scalar).
+
     final_loss = \
         interior_loss.pow(2).mean() + \
-        initial_loss_f.pow(2).mean() + \
+        initial_loss_f.pow(2).mean() +\
         initial_loss_df.pow(2).mean()
     
     if not nn_approximator.pinning:
@@ -197,7 +227,7 @@ def check_gradient(nn_approximator: PINN, x: torch.Tensor, t: torch.Tensor) -> b
 
 
 def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
-
+    import matplotlib 
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
 
@@ -217,15 +247,18 @@ def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
             ax.legend()
 
     n_frames = t_raw.shape[0]
-    _ = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
-
+    ani = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
+    writergif = matplotlib.animation.PillowWriter(fps=1)
+    ani.save('wave.gif',writer=writergif)
     plt.show()
 
 if __name__ == "__main__":
     from functools import partial
 
-    x_domain = [0.0, LENGTH]; n_points_x = 150
-    t_domain = [0.0, TOTAL_TIME]; n_points_t = 150
+    N = 5
+
+    x_domain = [0.0, LENGTH]; n_points_x = N
+    t_domain = [0.0, TOTAL_TIME]; n_points_t = N
     
 
     x_raw = torch.linspace(x_domain[0], x_domain[1], steps=n_points_x, requires_grad=True)
@@ -245,9 +278,11 @@ if __name__ == "__main__":
     x = grids[0].flatten().reshape(-1, 1)
     t = grids[1].flatten().reshape(-1, 1)
 
+    #print("x_input:", x)
+    #print("t_input:", t)
 
-    #print("x grids shape:", x.shape)
-    #print("t grids shape:", t.shape)
+    print("x grids shape:", x.shape)
+    print("t grids shape:", t.shape)
 
     #print("value of x after flattening:", x)
 
