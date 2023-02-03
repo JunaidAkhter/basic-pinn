@@ -54,7 +54,7 @@ class PINN(nn.Module):
         return grads
 #%%
 
-def loss(nna, t, t0 = torch.Tensor([0.0]), states0 = torch.Tensor([U0, V0])):
+def loss(nna, t, t0 = torch.Tensor([0.0]), states0 = 0.0):
     states = nna(t)
     grads = nna.grads(states, t)
 
