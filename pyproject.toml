@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "basic-pinn"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "basic_pinn"}]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+cycler = "0.11.0"
+fonttools = "4.28.5"
+kiwisolver = "1.3.2"
+matplotlib = "3.5.1"
+numpy = "1.21.5"
+packaging = "21.3"
+pillow = "8.4.0"
+pyparsing = "3.0.6"
+python-dateutil = "2.8.2"
+scipy = "1.7.3"
+six = "1.16.0"
+typing-extensions = "4.0.1"
+torch = {version = ">=0.13.1+cu116", source = "torchSource"}
+
+
+[[tool.poetry.source]]
+name = "torchSource"
+url = "https://download.pytorch.org/whl/cu116"
+default = false
+secondary = true
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.21.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

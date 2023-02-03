@@ -1,217 +1,180 @@
-from typing import Callable
+#%%
+# from typing import Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
 
-TOTAL_TIME = 1.0
-a = 1.0
-b = a
-c = a
-d = a
+from scipy.integrate import solve_ivp
 
-#Initial values of the prey and the predator
-U0 = 1.5
-V0 = 1.0
-
-
+#%%
 class PINN(nn.Module):
     """Simple neural network accepting one feature as input and returning a single output
     
     In the context of PINNs, the neural network is used as universal function approximator
     to approximate the solution of the differential equation
     """
-    def __init__(self, num_hidden: int, dim_hidden: int, act=nn.Tanh(), pinning: bool = False):
-
+    def __init__(self, num_hidden: int, dim_hidden: int, act=nn.ReLU(), pinning: bool = False):
+        # MB what does `pinning` doe?
         super().__init__()
 
         self.pinning = pinning
 
-        self.layer_in = nn.Linear(1, dim_hidden)
-        self.layer_out = nn.Linear(dim_hidden, 2)
+        self.layers = nn.Sequential()
 
-        num_middle = num_hidden - 1
-        self.middle_layers = nn.ModuleList(
-            [nn.Linear(dim_hidden, dim_hidden) for _ in range(num_middle)]
-        )
-        self.act = act
+        self.layers.add_module("layer_in", nn.Linear(1, dim_hidden))
+
+        for i in range(num_hidden):
+            self.layers.add_module(f"hidden_ReLU{i}", act)
+            self.layers.add_module(f"hidden_layer{i}", nn.Linear(dim_hidden, dim_hidden))
+        
+        self.layers.add_module("final_ReLu", act)
+        self.layers.add_module("layer_out", nn.Linear(dim_hidden, 2))
+
     def forward(self, x):
-        out = self.act(self.layer_in(x))
-        for layer in self.middle_layers:
-            out = self.act(layer(out))
-        return self.layer_out(out)
+        return self.layers(x)
 
+    def grads(self, vals_out, vals_in):
+        if vals_out.dim() == 1:
+            #vals_in = vals_in.reshape(1, -1) # turn into single-row matrix
+            vals_out = vals_out.reshape(1, - 1)
+        
+        grads = []
+        for output_index in range(vals_out.shape[1]):
+            out_i = vals_out[:, output_index] # values of output at different points in time
+            out_dt = torch.autograd.grad(
+                out_i,
+                vals_in,
+                grad_outputs=torch.ones_like(out_i),
+                create_graph=True,
+                retain_graph=True,
+            )[0].reshape(-1)
+            grads.append(out_dt)
+        return grads
+#%%
 
-def f(nn_approximator: PINN, x: torch.Tensor) -> torch.Tensor:
-    """Compute the value of the approximate solution from the NN model"""
+def loss(nna, t, t0 = torch.Tensor([0.0]), states0 = torch.Tensor([U0, V0])):
+    states = nna(t)
+    grads = nna.grads(states, t)
 
-    return nn_approximator(x)
+    u = states[:, 0]
+    v = states[:, 1]
 
-""" 
-def df(nn_approximator:PINN, x: torch.Tensor = None, order: int = 1) -> torch.Tensor:
-    df_value = f(nn_approximator, x)
-    print("the shape of the df_vlaue before:", df_value.shape)
-    for _ in range(order):
-        df_value = torch.autograd.grad(
-            df_value,
-            x,
-            #grad_outputs=torch.ones(x.shape[0],  2),  
-            grad_outputs=torch.ones_like(df_value),  
-            create_graph=True,
-            retain_graph=True,
-        )[0]
-    print("The shape of the df value:", df_value.shape)
-    return df_value
- """
-def df(nn_approximator:PINN, x: torch.Tensor = None, order: int = 1) -> torch.Tensor:
-  
-    df_value = f(nn_approximator, x)
-    #print("type of df_value on top:", type(df_value), "shape of df_value:", df_value.shape)
+    dudt = grads[0]
+    dvdt = grads[1]
 
-    df_u = df_value[:, 0].reshape(-1, 1)
+    # interior loss:
+    # du/dt = α u - β u v
+    # dv/dt = δ u v - γ v
 
-    #print("df_u on top:", df_u)
-    df_v = df_value[:, 1].reshape(-1, 1)
+    # f = [ au - βuv - du/dt, δuv - γv - dv/dt ]    
+       
+    f0 = a * u - b * u * v - dudt
+    f1 = c * u * v - d * v - dvdt
+    
+    # Σ_i (||f_{i-1}|| + ||f_i||)/2 Δt_i
+    Δt = (t[1:] - t[:-1]).reshape(-1)
+    F = torch.sqrt(f0**2 + f1**2)
 
-    for _ in range(order):
-        df_u = torch.autograd.grad(
-            df_u,
-            x,
-            grad_outputs= torch.ones_like(df_u), 
-            create_graph=True,
-            retain_graph=True,
-        )[0]
-        df_v = torch.autograd.grad(
-            df_v,
-            x,
-            grad_outputs= torch.ones_like(df_v), 
-            create_graph=True,
-            retain_graph=True,
-        )[0]
-    #print("shape of df_u:", df_u.shape)
-    #print("shape of df_v:", df_v.shape)
+    loss_interior = torch.sum( Δt * (F[:-1] + F[1:])/2 )
 
-    #print("type of df_value:", type(df_value), "shape of df_value:", df_value.shape)
-    return [df_u, df_v]
+    # boundary loss
+    pred0 = nna(t0)
+    loss_boundary = torch.sqrt(torch.sum((pred0 - states0)**2))
 
-def compute_loss(
-    nn_approximator:PINN, x: torch.Tensor = None, verbose: bool = False
-) -> torch.float:
-    """Compute the full loss function as interior loss + boundary loss
+    return loss_interior + loss_boundary, loss_interior, loss_boundary
 
-    This custom loss function is fully defined with differentiable tensors therefore
-    the .backward() method can be applied to it
-    """
-    #print("shape of the du derivative:", df(nn_approximator, x).shape)
-
-    #print("shape of the derivative:", df(nn_approximator, x).shape)
-
-
-    #print("The shafe of the neural network output is:", f(nn_approximator, x).shape)
-
-    interior_loss_u = df(nn_approximator, x)[0] - a * f(nn_approximator, x)[:, 0] +\
-                             b * f(nn_approximator, x)[:, 0] * f(nn_approximator, x)[:, 1]
-
-    interior_loss_v = df(nn_approximator, x)[1] - d * f(nn_approximator, x)[:, 0]*f(nn_approximator, x)[:, 1] +\
-                             c * f(nn_approximator, x)[:, 1]
-
-    interior_loss = interior_loss_u + interior_loss_v
-
-    boundary = torch.Tensor([0.0])
-    boundary.requires_grad = True
-    boundary_loss_u = f(nn_approximator, boundary)[0] - U0
-    boundary_loss_v = f(nn_approximator, boundary)[1] - V0
-    final_loss = interior_loss.pow(2).mean() + boundary_loss_u ** 2 +\
-        boundary_loss_v ** 2
-
-    return final_loss
-
-
-
-
+#%%
 def train_model(
     nn_approximator:PINN,
-    loss_fn: Callable,
-    learning_rate: int = 0.01,
-    max_epochs: int = 1_000,
+    loss_fn,
+    learning_rate = 0.001,
+    max_epochs: int = 500,
 ) -> PINN:
 
     loss_evolution = []
 
+    everynth = int(np.ceil(max_epochs/10))
     optimizer = torch.optim.SGD(nn_approximator.parameters(), lr=learning_rate)
+    #optimizer = torch.optim.Adam(nn_approximator.parameters(), lr=learning_rate)
     for epoch in range(max_epochs):
-
         try:
-
-            loss: torch.Tensor = loss_fn(nn_approximator)
             optimizer.zero_grad()
+            loss, li, lb = loss_fn(nn_approximator)
             loss.backward()
             optimizer.step()
 
-            if epoch % 1000 == 0:
-                print(f"Epoch: {epoch} - Loss: {float(loss):>7f}")
+            if epoch % everynth == 0:
+                print(f"Epoch: {epoch} - Loss: {float(loss):>7f} = {li.item():>3f} + {lb.item():>3f}")
 
-            loss_evolution.append(loss.detach().numpy())
+            loss_evolution.append(loss.item())
 
         except KeyboardInterrupt:
             break
 
     return nn_approximator, np.array(loss_evolution)
+#%%
 
+TOTAL_TIME = 2.0
+a = 1.0
+b = a
+c = a
+d = a
 
-def input_transform(t):
-    return torch.cat(
-         [
-             torch.sin(t),
-         ],
-         dim=1
-     )
+U0 = 1.5
+V0 = 1.0
+        
+domain = [0.0, TOTAL_TIME]
+t = torch.linspace(domain[0], domain[1], steps=10, requires_grad=True).reshape(-1,1)
+nna = PINN(2, 50)
 
+model_loss = lambda nna : loss(nna, t, t0=torch.Tensor([0.0,]), states0 = torch.Tensor([U0, V0]))
+nna, loss_evolution = train_model(nna, model_loss, 0.001, 5000);
 
-if __name__ == "__main__":
-    from functools import partial
+#%%
+T = torch.linspace(domain[0], domain[1], steps=100).reshape(-1, 1)
 
-    domain = [0.0, TOTAL_TIME]
-    x = torch.linspace(domain[0], domain[1], steps=10, requires_grad=True)
-    x = x.reshape(x.shape[0], 1)
-    #x = input_transform(x)
-    nn_approximator = PINN(6, 50)
-    # f_initial = f(nn_approximator, x)
-    # ax.plot(x.detach().numpy(), f_initial.detach().numpy(), label="Initial NN solution")
+fig, ax = plt.subplots()
 
-    # train the PINN
-    loss_fn = partial(compute_loss, x=x, verbose=True)
+f_final_training = nna(t).detach().numpy()
+f_final = nna(T).detach().numpy()
 
-    nn_approximator_trained, loss_evolution = train_model(
-        nn_approximator, loss_fn=loss_fn, learning_rate=0.1, max_epochs=10_000
-    )
+_t = t.detach().numpy().reshape(-1)
+_T = T.detach().numpy().reshape(-1)
 
-    x_eval = torch.linspace(domain[0], domain[1], steps=100).reshape(-1, 1)
+ax.scatter(_t, f_final_training[:, 0], label="Training points u", color="red")
+ax.scatter(_t, f_final_training[:, 1], label="Training points v", color="black")
 
-    #x = input_transform(x_eval)
-    # plotting
+ax.plot(_T, f_final[:, 0], label="NN final solution u", color = "red")
+ax.plot(_T, f_final[:, 1], label="NN final solution v", color = "black")
 
-    fig, ax = plt.subplots()
+ax.set(title="Lotka_voltera_equations", xlabel="t", ylabel="Population")
 
-    f_final_training = f(nn_approximator_trained, x)
-    f_final = f(nn_approximator_trained, x_eval)
+def lveqs(t, states):
+    u = states[0]
+    v = states[1]
+    return np.array([
+        a * u - b * u * v, 
+        c * u * v - d * v
+    ])
+    # du/dt = α u - β u v
+    # dv/dt = δ u v - γ v
 
+numeric_solution = solve_ivp(lveqs, (_T[0], _T[-1]), [U0, V0], "RK45", _T)
 
-    ax.scatter(x.detach().numpy(), f_final_training.detach().numpy()[:, 0], label="Training points u", color="red")
-    
-    ax.scatter(x.detach().numpy(), f_final_training.detach().numpy()[:, 1], label="Training points v", color="black")
-    
-    ax.plot(x_eval.detach().numpy(), f_final.detach().numpy()[:, 0], label="NN final solution u", color = "red")
- 
-    ax.plot(x_eval.detach().numpy(), f_final.detach().numpy()[:, 1], label="NN final solution v", color = "black")
+usol = numeric_solution.y[0, :]
+vsol = numeric_solution.y[1, :]
 
-    ax.set(title="Lotka_voltera_equations", xlabel="t", ylabel="Population")
-    ax.legend()
+ax.plot(numeric_solution.t, usol)
+ax.plot(numeric_solution.t, vsol)
 
-    fig, ax = plt.subplots()
-    ax.semilogy(loss_evolution)
-    ax.set(title="Loss evolution", xlabel="# epochs", ylabel="Loss")
-    ax.legend()
+ax.legend()
 
-    plt.show()
+fig, ax = plt.subplots()
+ax.semilogy(loss_evolution)
+ax.set(title="Loss evolution", xlabel="# epochs", ylabel="Loss")
+ax.legend()
+
+plt.show()
+# %%
