@@ -1,11 +1,11 @@
+#%%
 from typing import Callable
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
-
-TOTAL_TIME = 1.0
+#%%
+TOTAL_TIME = 2.0
 a = 1.0
 b = a
 c = a
@@ -94,7 +94,7 @@ def df(nn_approximator:PINN, x: torch.Tensor = None, order: int = 1) -> torch.Te
 
     #print("type of df_value:", type(df_value), "shape of df_value:", df_value.shape)
     return [df_u, df_v]
-
+#%%
 def compute_loss(
     nn_approximator:PINN, x: torch.Tensor = None, verbose: bool = False
 ) -> torch.float:
@@ -116,18 +116,32 @@ def compute_loss(
     interior_loss_v = df(nn_approximator, x)[1] - d * f(nn_approximator, x)[:, 0]*f(nn_approximator, x)[:, 1] +\
                              c * f(nn_approximator, x)[:, 1]
 
-    interior_loss = interior_loss_u + interior_loss_v
+    #interior_loss = interior_loss_u + interior_loss_v
+
+    print("shape of input x:", x.shape)
+    print("shape of loss:", interior_loss_u.shape, interior_loss_v.shape)
+
+    F = torch.sqrt(interior_loss_u**2 + interior_loss_v**2)
+    F = F**2
+    del_x = (x[1:] - x[:-1]).reshape(-1)
+
+    loss_interior = del_x * (F[:-1] + F[1:])/2 
 
     boundary = torch.Tensor([0.0])
     boundary.requires_grad = True
     boundary_loss_u = f(nn_approximator, boundary)[0] - U0
     boundary_loss_v = f(nn_approximator, boundary)[1] - V0
-    final_loss = interior_loss.pow(2).mean() + boundary_loss_u ** 2 +\
-        boundary_loss_v ** 2
 
+    boundary_loss = torch.sqrt(boundary_loss_u**2 + boundary_loss_v**2)
+    boundary_loss = boundary_loss**2
+    #final_loss = interior_loss.pow(2).mean() + boundary_loss_u ** 2 +\
+    #    boundary_loss_v ** 2
+
+    #final_loss = F.mean() + boundary_loss.mean()
+    final_loss = torch.sum(loss_interior) + boundary_loss
     return final_loss
 
-
+#%%
 
 
 def train_model(
@@ -158,16 +172,16 @@ def train_model(
             break
 
     return nn_approximator, np.array(loss_evolution)
+#%%
 
-
-def input_transform(t):
+""" def input_transform(t):
     return torch.cat(
          [
              torch.sin(t),
          ],
          dim=1
      )
-
+ """
 
 if __name__ == "__main__":
     from functools import partial
@@ -215,3 +229,6 @@ if __name__ == "__main__":
     ax.legend()
 
     plt.show()
+    print("loss_evolution: ", loss_evolution)
+    print("loss minimum: ", min(loss_evolution), "loss maximum:", max(loss_evolution))
+#%%
