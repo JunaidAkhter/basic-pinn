@@ -37,6 +37,7 @@ class PINN(nn.Module):
             [nn.Linear(dim_hidden, dim_hidden) for _ in range(num_middle)]
         )
         self.act = act
+        #self.act = nn.ReLU() performs bad!
     def forward(self, x):
         out = self.act(self.layer_in(x))
         for layer in self.middle_layers:
@@ -122,6 +123,7 @@ def compute_loss(
     F = F**2
     del_x = (x[1:] - x[:-1]).reshape(-1)
 
+    #using the trapezoidal rule for integration. 
     loss_interior = del_x * (F[:-1] + F[1:])/2 
 
     boundary = torch.Tensor([0.0])
@@ -182,12 +184,12 @@ def train_model(
 
 if __name__ == "__main__":
     from functools import partial
-
+    TOTAL_TIME = 8.0
     domain = [0.0, TOTAL_TIME]
-    x = torch.linspace(domain[0], domain[1], steps=50, requires_grad=True)
+    x = torch.linspace(domain[0], domain[1], steps=40, requires_grad=True)
     x = x.reshape(x.shape[0], 1)
     #x = input_transform(x)
-    nn_approximator = PINN(6, 50)
+    nn_approximator = PINN(7, 70)
     # f_initial = f(nn_approximator, x)
     # ax.plot(x.detach().numpy(), f_initial.detach().numpy(), label="Initial NN solution")
 
@@ -195,10 +197,10 @@ if __name__ == "__main__":
     loss_fn = partial(compute_loss, x=x, verbose=True)
 
     nn_approximator_trained, loss_evolution = train_model(
-        nn_approximator, loss_fn=loss_fn, learning_rate=0.1, max_epochs=10_000
+        nn_approximator, loss_fn=loss_fn, learning_rate=0.1, max_epochs=50_000
     )
 
-    x_eval = torch.linspace(domain[0], domain[1], steps=100).reshape(-1, 1)
+    x_eval = torch.linspace(domain[0], domain[1], steps=150).reshape(-1, 1)
 
     #x = input_transform(x_eval)
     # plotting
