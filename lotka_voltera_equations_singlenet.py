@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
+from scipy.integrate import solve_ivp
 #%%
-TOTAL_TIME = 2.0
+TOTAL_TIME = 10.0
 a = 1.0
 b = a
 c = a
@@ -110,16 +111,12 @@ def compute_loss(
 
     #print("The shafe of the neural network output is:", f(nn_approximator, x).shape)
 
-    interior_loss_u = df(nn_approximator, x)[0] - a * f(nn_approximator, x)[:, 0] +\
-                             b * f(nn_approximator, x)[:, 0] * f(nn_approximator, x)[:, 1]
+    interior_loss_u = df(nn_approximator, x)[0].flatten() - a * f(nn_approximator, x)[:, 0].flatten() +\
+                             b * f(nn_approximator, x)[:, 0].flatten() * f(nn_approximator, x)[:, 1].flatten()
 
-    interior_loss_v = df(nn_approximator, x)[1] - d * f(nn_approximator, x)[:, 0]*f(nn_approximator, x)[:, 1] +\
-                             c * f(nn_approximator, x)[:, 1]
+    interior_loss_v = df(nn_approximator, x)[1].flatten() - d * f(nn_approximator, x)[:, 0].flatten()*f(nn_approximator, x)[:, 1].flatten() +\
+                             c * f(nn_approximator, x)[:, 1].flatten()
 
-    #interior_loss = interior_loss_u + interior_loss_v
-
-    print("shape of input x:", x.shape)
-    print("shape of loss:", interior_loss_u.shape, interior_loss_v.shape)
 
     F = torch.sqrt(interior_loss_u**2 + interior_loss_v**2)
     F = F**2
@@ -137,8 +134,8 @@ def compute_loss(
     #final_loss = interior_loss.pow(2).mean() + boundary_loss_u ** 2 +\
     #    boundary_loss_v ** 2
 
-    #final_loss = F.mean() + boundary_loss.mean()
-    final_loss = torch.sum(loss_interior) + boundary_loss
+    final_loss = F.mean() + boundary_loss.mean()
+    #final_loss = torch.sum(loss_interior) + boundary_loss
     return final_loss
 
 #%%
@@ -187,7 +184,7 @@ if __name__ == "__main__":
     from functools import partial
 
     domain = [0.0, TOTAL_TIME]
-    x = torch.linspace(domain[0], domain[1], steps=10, requires_grad=True)
+    x = torch.linspace(domain[0], domain[1], steps=50, requires_grad=True)
     x = x.reshape(x.shape[0], 1)
     #x = input_transform(x)
     nn_approximator = PINN(6, 50)
@@ -211,6 +208,30 @@ if __name__ == "__main__":
     f_final_training = f(nn_approximator_trained, x)
     f_final = f(nn_approximator_trained, x_eval)
 
+
+### =============Numeric Solution==========================
+    _t = x.detach().numpy().reshape(-1)
+    _T = x_eval.detach().numpy().reshape(-1)
+
+    def lveqs(t, states):
+        u = states[0]
+        v = states[1]
+        return np.array([
+            a * u - b * u * v, 
+            c * u * v - d * v
+        ])
+        # du/dt = α u - β u v
+        # dv/dt = δ u v - γ v
+
+    numeric_solution = solve_ivp(lveqs, (_T[0], _T[-1]), [U0, V0], "RK45", _T)
+
+    usol = numeric_solution.y[0, :]
+    vsol = numeric_solution.y[1, :]
+
+    ax.plot(numeric_solution.t, usol)
+    ax.plot(numeric_solution.t, vsol)
+    ax.legend()
+### =========================================================
 
     ax.scatter(x.detach().numpy(), f_final_training.detach().numpy()[:, 0], label="Training points u", color="red")
     
