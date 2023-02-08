@@ -1,17 +1,16 @@
 from typing import Callable
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
-#from torchviz import make_dot 
+
 
 LENGTH = 1.
 TOTAL_TIME = 1.
-
+n = 1 #frequency of sinusoidal initial conditions
 
 def initial_condition(x) -> torch.Tensor:
-    res = torch.sin( 2*np.pi * x).reshape(-1, 1) * 0.5
+    res = torch.sin(n * np.pi * x/LENGTH).reshape(-1, 1)
     return res
 
 
@@ -38,41 +37,22 @@ class PINN(nn.Module):
 
     def forward(self, x, t):
 
-        #print("shape of x: ", x.shape)
-        #print("shape of t: ", t.shape)
-
-        #print("t:", t)
-        #print("x", x)
         x_stack = torch.cat([x, t], dim=1)        
-        print("x_stack", x_stack)
-        print("shape of x_stack:", x_stack.shape)
-
         out = self.act(self.layer_in(x_stack))
-
-        #print("shape of out: ", out.shape)
-
         for layer in self.middle_layers:
             out = self.act(layer(out))
         logits = self.layer_out(out)
-
-        print("shape of logits:", logits.shape)
 
         # if requested pin the boundary conditions 
         # using a surrogate model: (x - 0) * (x - L) * NN(x)
         if self.pinning:
             logits *= (x - x[0]) * (x - x[-1])
-        
+
         return logits
 
 def f(nn_approximator: PINN, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
     """Compute the value of the approximate solution from the NN model"""
-    
-    #print("shape of x fed to nn:", x.shape)
-    #print("shape of t fed to nn", t.shape)
-    #print("pringting t:", t)
-    y = nn_approximator(x, t)
-    #make_dot(y.mean(), params=dict(nn_approximator.named_parameters()))
-    return y
+    return nn_approximator(x, t)
 
 
 def df(output: torch.Tensor, input: torch.Tensor, order: int = 1) -> torch.Tensor:
@@ -86,7 +66,7 @@ def df(output: torch.Tensor, input: torch.Tensor, order: int = 1) -> torch.Tenso
             create_graph=True,
             retain_graph=True,
         )[0]
-    print("shape of df:", df_value.shape)
+
     return df_value
 
 
@@ -106,69 +86,47 @@ def compute_loss(
     nn_approximator: PINN, x: torch.Tensor = None, t: torch.Tensor = None
 ) -> torch.float:
     """Compute the full loss function as interior loss + boundary loss
-
     This custom loss function is fully defined with differentiable tensors therefore
     the .backward() method can be applied to it
     """
-
-    C = 1.
+    #thernal diffusivity constant
+    alpha = 0.4
 
     # PDE residual
-    #print("shape  of x before interior loss:", x.shape)
+    interior_loss = dfdx(nn_approximator, x, t, order=2) - (1/alpha) * dfdt(nn_approximator, x, t, order=1)
 
-    #print("the output dimension of the neural network", f(nn_approximator, x, t).shape)
 
-    interior_loss = dfdx(nn_approximator, x, t, order=2) - (1/C**2) * dfdt(nn_approximator, x, t, order=2)
 
     # periodic boundary conditions at the domain extrema
     t_raw = torch.unique(t).reshape(-1, 1).detach().numpy()
     t_raw = torch.Tensor(t_raw)
     t_raw.requires_grad = True
 
-
-    #print("t shape:", t.reshape(-1, 1).shape)
-    #print("t_raw shape: ", t_raw.shape)
-
-
     boundary_xi = torch.ones_like(t_raw, requires_grad=True) * x[0]
-
-    #print("boundary_xi : ", boundary_xi)
     boundary_loss_xi = f(nn_approximator, boundary_xi, t_raw)
-    
+
     boundary_xf = torch.ones_like(t_raw, requires_grad=True) * x[-1]
-    
-    #print("boundary_xf : ", boundary_xf)
     boundary_loss_xf = f(nn_approximator, boundary_xf, t_raw)
-    
+
     # initial condition loss on both the function and its
     # time first-order derivative
     x_raw = torch.unique(x).reshape(-1, 1).detach().numpy()
     x_raw = torch.Tensor(x_raw)
     x_raw.requires_grad = True
 
-    #print("x raw inside shape:", x_raw.shape)
-    #print(" t raw inside shape: ", t_raw.shape)
-
     f_initial = initial_condition(x_raw)    
-
-    #print("shape of f_initial : ", f_initial.shape)
-
     t_initial = torch.zeros_like(x_raw)
     t_initial.requires_grad = True
 
-
-    #print("shape of nn output for x  raw:", f(nn_approximator,x_raw, t_initial).shape)
     initial_loss_f = f(nn_approximator, x_raw, t_initial) - f_initial 
-    initial_loss_df = dfdt(nn_approximator, x_raw, t_initial, order=1)
-    
-    # obtain the final MSE loss by averaging each loss term and summing them up. Remember that this
-    # is just a number (scalar).
+    #initial_loss_df = dfdt(nn_approximator, x_raw, t_initial, order=1)
 
+    # obtain the final MSE loss by averaging each loss term and summing them up
     final_loss = \
         interior_loss.pow(2).mean() + \
-        initial_loss_f.pow(2).mean() +\
-        initial_loss_df.pow(2).mean()
-    
+        initial_loss_f.pow(2).mean()
+    #    initial_loss_df.pow(2).mean()
+
     if not nn_approximator.pinning:
         final_loss += boundary_loss_xf.pow(2).mean() + boundary_loss_xi.pow(2).mean()
 
@@ -204,7 +162,7 @@ def train_model(
 def check_gradient(nn_approximator: PINN, x: torch.Tensor, t: torch.Tensor) -> bool:
 
     eps = 1e-4
-    
+
     dfdx_fd = (f(nn_approximator, x + eps, t) - f(nn_approximator, x - eps, t)) / (2 * eps)
     dfdx_autodiff = dfdx(nn_approximator, x, t, order=1)
     is_matching_x = torch.allclose(dfdx_fd.T, dfdx_autodiff.T, atol=1e-2, rtol=1e-2)
@@ -212,7 +170,7 @@ def check_gradient(nn_approximator: PINN, x: torch.Tensor, t: torch.Tensor) -> b
     dfdt_fd = (f(nn_approximator, x, t + eps) - f(nn_approximator, x, t - eps)) / (2 * eps)
     dfdt_autodiff = dfdt(nn_approximator, x, t, order=1)
     is_matching_t = torch.allclose(dfdt_fd.T, dfdt_autodiff.T, atol=1e-2, rtol=1e-2)
-    
+
     eps = 1e-2
 
     d2fdx2_fd = (f(nn_approximator, x + eps, t) - 2 * f(nn_approximator, x, t) + f(nn_approximator, x - eps, t)) / (eps ** 2)
@@ -222,19 +180,19 @@ def check_gradient(nn_approximator: PINN, x: torch.Tensor, t: torch.Tensor) -> b
     d2fdt2_fd = (f(nn_approximator, x, t + eps) - 2 * f(nn_approximator, x, t) + f(nn_approximator, x, t - eps)) / (eps ** 2)
     d2fdt2_autodiff = dfdt(nn_approximator, x, t, order=2)
     is_matching_t2 = torch.allclose(d2fdt2_fd.T, d2fdt2_autodiff.T, atol=1e-2, rtol=1e-2)
-    
+
     return is_matching_x and is_matching_t and is_matching_x2 and is_matching_t2
 
 
 def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
-    import matplotlib 
+
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
 
     fig, ax = plt.subplots()
     x_raw = torch.unique(x).reshape(-1, 1)
     t_raw = torch.unique(t)
-        
+
     def animate(i):
 
         if not i % 10 == 0:
@@ -247,44 +205,22 @@ def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
             ax.legend()
 
     n_frames = t_raw.shape[0]
-    ani = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
-    writergif = matplotlib.animation.PillowWriter(fps=1)
-    ani.save('wave.gif',writer=writergif)
+    _ = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
+
     plt.show()
 
 if __name__ == "__main__":
     from functools import partial
 
-    N = 5
-
-    x_domain = [0.0, LENGTH]; n_points_x = N
-    t_domain = [0.0, TOTAL_TIME]; n_points_t = N
-    
+    x_domain = [0.0, LENGTH]; n_points_x = 150
+    t_domain = [0.0, TOTAL_TIME]; n_points_t = 150
 
     x_raw = torch.linspace(x_domain[0], x_domain[1], steps=n_points_x, requires_grad=True)
     t_raw = torch.linspace(t_domain[0], t_domain[1], steps=n_points_t, requires_grad=True)
     grids = torch.meshgrid(x_raw, t_raw, indexing="ij")
-    
-
-    #print("x_raw", x_raw)
-    #print(" x_raw shape", x_raw.shape)
-    #print("t_raw", t_raw)
-    #print("t_raw shape", t_raw.shape)
-    #print("grids", grids)
-    #print("shape of grids 0", grids[0].shape, "shape of grids 1", grids[1].shape)
-
-
 
     x = grids[0].flatten().reshape(-1, 1)
     t = grids[1].flatten().reshape(-1, 1)
-
-    #print("x_input:", x)
-    #print("t_input:", t)
-
-    print("x grids shape:", x.shape)
-    print("t grids shape:", t.shape)
-
-    #print("value of x after flattening:", x)
 
     # plt.figure(1)
     # plt.plot(x_raw.detach().numpy(), initial_condition(x_raw).detach().numpy())
@@ -292,9 +228,9 @@ if __name__ == "__main__":
 
     nn_approximator = PINN(3, 15, pinning=False)
     # assert check_gradient(nn_approximator, x, t)
-    
-    compute_loss(nn_approximator, x=x, t=t)
-    
+
+    #compute_loss(nn_approximator, x=x, t=t)
+
     # train the PINN
     loss_fn = partial(compute_loss, x=x, t=t)
     nn_approximator_trained = train_model(

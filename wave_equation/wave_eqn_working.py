@@ -1,4 +1,5 @@
 from typing import Callable
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -203,15 +204,16 @@ def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
             ax.legend()
 
     n_frames = t_raw.shape[0]
-    _ = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
-
+    ani = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
+    writergif = matplotlib.animation.PillowWriter(fps=10)
+    ani.save('wave.gif',writer=writergif)
     plt.show()
 
 if __name__ == "__main__":
     from functools import partial
 
-    x_domain = [0.0, LENGTH]; n_points_x = 150
-    t_domain = [0.0, TOTAL_TIME]; n_points_t = 150
+    x_domain = [0.0, LENGTH]; n_points_x = 100
+    t_domain = [0.0, TOTAL_TIME]; n_points_t = 100
 
     x_raw = torch.linspace(x_domain[0], x_domain[1], steps=n_points_x, requires_grad=True)
     t_raw = torch.linspace(t_domain[0], t_domain[1], steps=n_points_t, requires_grad=True)
@@ -232,7 +234,7 @@ if __name__ == "__main__":
     # train the PINN
     loss_fn = partial(compute_loss, x=x, t=t)
     nn_approximator_trained = train_model(
-        nn_approximator, loss_fn=loss_fn, learning_rate=0.005, max_epochs=20_000
+        nn_approximator, loss_fn=loss_fn, learning_rate=0.005, max_epochs=5000
     )
 
     input("Plot")
