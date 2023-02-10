@@ -258,15 +258,15 @@ def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
     t_plot = torch.unique(t_eval)
     ax.plot(x_plot.detach().numpy(), f_eval[:, 0], 'r-', label='t = 0')
     t_indices = np.where(t_plot>0.2)[0][0]
-    print("t_indices: ", t_indices)
-    print("t values: ", t_eval[t_indices])
+    #print("t_indices: ", t_indices)
+    #print("t values: ", t_eval[t_indices])
     ax.plot(x_plot.detach().numpy(), f_eval[:, t_indices], 'b-') 
     ax.plot(x_plot.detach().numpy(), f_eval[:, -1], 'g-', label = 't = 1.0')
-
-    
+    ax.set_xlabel("x (length)")
+    ax.set_ylabel("U (x, t = t)")
     ax.legend()
     plt.title("Heat Eqn in 1-D without source, n = 1 (init freq)")
-    plt.savefig("heat_1D_n"+str{n}+".png")
+    plt.savefig("heat_1D_n2.png")
     plt.show()
 
 #%%
