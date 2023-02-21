@@ -5,7 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
+import time
 
+# ADD THIS LINE TO USE GPU
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
 #%%
 LENGTH = 1.
 TOTAL_TIME = 1.
@@ -110,7 +113,7 @@ def compute_loss(
 
 
     # periodic boundary conditions at the domain extrema
-    t_raw = torch.unique(t).reshape(-1, 1).detach().numpy()
+    t_raw = torch.unique(t).reshape(-1, 1).detach().cpu().numpy()
     t_raw = torch.Tensor(t_raw)
     t_raw.requires_grad = True
 
@@ -122,7 +125,7 @@ def compute_loss(
 
     # initial condition loss on both the function and its
     # time first-order derivative
-    x_raw = torch.unique(x).reshape(-1, 1).detach().numpy()
+    x_raw = torch.unique(x).reshape(-1, 1).detach().cpu().numpy()
     x_raw = torch.Tensor(x_raw)
     x_raw.requires_grad = True
 
@@ -153,6 +156,8 @@ def train_model(
 ) -> PINN:
 
     optimizer = torch.optim.Adam(nn_approximator.parameters(), lr=learning_rate)
+    start_time = time.time()
+    full_start_time = start_time 
     for epoch in range(max_epochs):
 
         try:
@@ -164,33 +169,71 @@ def train_model(
 
             if epoch % 1000 == 0:
                 print(f"Epoch: {epoch} - Loss: {float(loss):>7f}")
-
+                start_time = time.time()
         except KeyboardInterrupt:
             break
-
+    execution_time = time.time() - full_start_time
+    exe_per_epoch = float(execution_time) / max_epochs
+    print('full execution time: '+str(execution_time))
+    print('execution time per epoch: '+str(exe_per_epoch))
     return nn_approximator
 #%%
+#%%
+def animate_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
+
+    import matplotlib 
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    fig, ax = plt.subplots()
+    x_raw = torch.unique(x).reshape(-1, 1)
+    t_raw = torch.unique(t)
+        
+    def animate(i):
+
+        if not i % 10 == 0:
+            t_partial = torch.ones_like(x_raw) * t_raw[i]
+            f_final = f(nn_trained, x_raw, t_partial)
+            ax.clear()
+            ax.plot(
+                x_raw.detach().cpu().numpy(), f_final.detach().cpu().numpy(), label=f"Time {float(t[i])}"
+            )
+            ax.set_ylim([-1, 1])
+            ax.set_xlabel("x")
+            ax.set_ylabel("u(x, t)")
+            ax.legend()
+
+
+    n_frames = t_raw.shape[0]
+    ani = FuncAnimation(fig, animate, frames=n_frames, interval=100, repeat=False)
+    writergif = matplotlib.animation.PillowWriter(fps=24)
+    ani.save('diffusion.gif',writer=writergif)
+    plt.show()
+#%%
+nx, ny = 100, 100
 def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
 
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
 
     ### Plot the training data set ###
-
+    animate_solution(nn_trained, x, t)
     f_train = f(nn_trained, x, t)
     fig, ax = plt.subplots()
-    f_train = f_train.detach().numpy()
-    f_train = f_train.reshape(10, 10)
+    f_train = f_train.detach().cpu().numpy()
+    f_train = f_train.reshape(nx, ny)
     #ax.clear()
     x_plot = torch.unique(x).reshape(-1, 1)
+    x_plot = x_plot.detach().cpu().numpy()
     t_plot = torch.unique(t)
-    ax.scatter(x_plot.detach().numpy(), f_train[:, 0], color = 'r')
+    ax.scatter(x_plot, f_train[:, 0], color = 'r', label = 'training, t = 0')
 
     """ t_indices = np.where(t_plot>0.2)[0][0]
     print("t indices: ", t_indices)
     print(" t values: ", t_plot[t_indices])
     ax.scatter(x_plot.detach().numpy(), f_train[:, t_indices]) """
-    ax.scatter(x_plot.detach().numpy(), f_train[:, -1], color = 'g')
+    ax.scatter(x_plot, f_train[:, -1], color = 'g', label = 'training, t = 1.0')
+    
     ### plot a new (eval) dataset ###
 
     # Preparing the x and the t dimensions for evaluation
@@ -204,31 +247,32 @@ def plot_solution(nn_trained: PINN, x: torch.Tensor, t: torch.Tensor):
 
     # making predictions on the eval data set and plotting 
     f_eval = f(nn_trained, x_eval, t_eval)
-    f_eval = f_eval.detach().numpy()
+    f_eval = f_eval.detach().cpu().numpy()
     f_eval = f_eval.reshape(n_points_t, n_points_x)
 
     x_plot = torch.unique(x_eval).reshape(-1, 1)
+    x_plot = x_plot.detach().cpu().numpy()
     t_plot = torch.unique(t_eval)
-    ax.plot(x_plot.detach().numpy(), f_eval[:, 0], 'r-', label='t = 0')
+    ax.plot(x_plot, f_eval[:, 0], 'r-', label='eval, t = 0')
     #t_indices = np.where(t_plot>0.2)[0][0]
     #ax.plot(x_plot.detach().numpy(), f_eval[:, t_indices], 'b-') 
-    ax.plot(x_plot.detach().numpy(), f_eval[:, -1], 'g-', label = 't = 1.0')
-    
+    ax.plot(x_plot, f_eval[:, -1], 'g-', label = 'eval, t = 1.0')
     ## Exact solution
+    ## Importing the exact solution created with "exact.py"
     data = np.load("diff_eq_data_ext.npz")
     x_exact, t_exact, usol_exact = data["x"], data["t"], data["usol"]
-    ax.plot(x_exact, usol_exact[:, 0], color = "r" label = "t = 0")
-    ax.plot(x_exact, usol_exact[:, -1], color = 'g', label = "t = 1")
+    ax.plot(x_exact, usol_exact[:, 0],"r--", marker = '*', markersize = 2, label = " Exact, t = 0")
+    ax.plot(x_exact, usol_exact[:, -1],'g--', marker = '*', markersize = 2, label = "Exact, t = 1")
     ax.set_xlabel("x (length)")
     ax.set_ylabel("U (x, t = t)")
     ax.legend()
-    plt.title("Heat Eqn in 1-D without source, n = 1 (init freq)")
-    plt.savefig("heat_1D_n1.png")
+    plt.title("Diffusion Eqn in 1-D, n = 1 (init freq)")
+    plt.savefig("diffusion.png")
     plt.show()
 #%%
 from functools import partial
-x_domain = [-LENGTH, LENGTH]; n_points_x = 10
-t_domain = [0.0, TOTAL_TIME]; n_points_t = 10
+x_domain = [-LENGTH, LENGTH]; n_points_x = nx
+t_domain = [0.0, TOTAL_TIME]; n_points_t = ny 
 
 x_raw = torch.linspace(x_domain[0], x_domain[1], steps=n_points_x, requires_grad=True)
 t_raw = torch.linspace(t_domain[0], t_domain[1], steps=n_points_t, requires_grad=True)
@@ -246,7 +290,7 @@ nn_approximator = PINN(3, 15, pinning=False)
 loss_fn = partial(compute_loss, x=x, t=t)
 
 nn_approximator_trained = train_model(
-    nn_approximator, loss_fn=loss_fn, learning_rate=0.005, max_epochs=10000
+    nn_approximator, loss_fn=loss_fn, learning_rate=0.005, max_epochs=2000
 )
 #%%
 #input("Plot")
